@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">FridgeChef AI</string>
+    <string name="quick_scan">Kühlschrank scannen</string>
+    <string name="widget_quick_scan_description">1-Klick Kühlschrank-Scan direkt vom Homescreen</string>
+    <string name="widget_daily_recipe_description">Tages-Rezept &amp; Zero-Waste Verbrauchs-Tipp</string>
+</resources>

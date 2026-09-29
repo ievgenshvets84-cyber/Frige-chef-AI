@@ -1,0 +1,6 @@
+{
+  "name": "FridgeChef AI",
+  "description": "Kühlschrank-Scan & smarte Zero-Waste Rezept-App mit KI-Bilderkennung",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
