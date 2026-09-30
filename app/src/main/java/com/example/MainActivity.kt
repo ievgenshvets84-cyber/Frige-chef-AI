@@ -15,8 +15,13 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.local.DefaultRecipes
+import androidx.compose.runtime.CompositionLocalProvider
+import com.example.ui.i18n.LocalAppLanguage
+import com.example.ui.i18n.LocalAppStrings
+import com.example.ui.i18n.Translations
 import com.example.ui.screens.FavoritesScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.RecipeBookScreen
 import com.example.ui.screens.RecipeDetailScreen
 import com.example.ui.screens.SocialStoryScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -26,6 +31,7 @@ import com.example.widget.QuickScanWidgetProvider
 
 enum class ScreenState {
     HOME,
+    RECIPE_BOOK,
     FAVORITES
 }
 
@@ -75,43 +81,59 @@ fun FridgeChefApp(
         }
     }
 
-    when {
-        // Full screen 9:16 Social Story modal
-        storyRecipe != null -> {
-            SocialStoryScreen(
-                recipe = storyRecipe!!,
-                onBackClick = { viewModel.closeStoryCreator() },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        // Recipe Detail View
-        selectedRecipe != null -> {
-            val isFav = savedRecipes.any { it.id == selectedRecipe!!.id }
-            RecipeDetailScreen(
-                recipe = selectedRecipe!!,
-                isFavorite = isFav,
-                onBackClick = { viewModel.selectRecipe(null) },
-                onFavoriteToggle = { viewModel.toggleFavorite(selectedRecipe!!) },
-                onShareStoryClick = {
-                    val r = selectedRecipe!!
-                    viewModel.openStoryCreator(r)
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        currentScreen == ScreenState.FAVORITES -> {
-            FavoritesScreen(
-                viewModel = viewModel,
-                onBackClick = { currentScreen = ScreenState.HOME },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        else -> {
-            HomeScreen(
-                viewModel = viewModel,
-                onNavigateToFavorites = { currentScreen = ScreenState.FAVORITES },
-                modifier = Modifier.fillMaxSize()
-            )
+    val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
+    val strings = Translations.forLanguage(currentLanguage)
+
+    CompositionLocalProvider(
+        LocalAppLanguage provides currentLanguage,
+        LocalAppStrings provides strings
+    ) {
+        when {
+            // Full screen 9:16 Social Story modal
+            storyRecipe != null -> {
+                SocialStoryScreen(
+                    recipe = storyRecipe!!,
+                    onBackClick = { viewModel.closeStoryCreator() },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            // Recipe Detail View
+            selectedRecipe != null -> {
+                val isFav = savedRecipes.any { it.id == selectedRecipe!!.id }
+                RecipeDetailScreen(
+                    recipe = selectedRecipe!!,
+                    isFavorite = isFav,
+                    onBackClick = { viewModel.selectRecipe(null) },
+                    onFavoriteToggle = { viewModel.toggleFavorite(selectedRecipe!!) },
+                    onShareStoryClick = {
+                        val r = selectedRecipe!!
+                        viewModel.openStoryCreator(r)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            currentScreen == ScreenState.RECIPE_BOOK -> {
+                RecipeBookScreen(
+                    viewModel = viewModel,
+                    onBackClick = { currentScreen = ScreenState.HOME },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            currentScreen == ScreenState.FAVORITES -> {
+                FavoritesScreen(
+                    viewModel = viewModel,
+                    onBackClick = { currentScreen = ScreenState.HOME },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            else -> {
+                HomeScreen(
+                    viewModel = viewModel,
+                    onNavigateToFavorites = { currentScreen = ScreenState.FAVORITES },
+                    onNavigateToCookbook = { currentScreen = ScreenState.RECIPE_BOOK },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }

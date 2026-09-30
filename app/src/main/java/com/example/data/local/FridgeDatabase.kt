@@ -9,14 +9,15 @@ import com.example.data.model.Ingredient
 import com.example.data.model.Recipe
 
 @Database(
-    entities = [Ingredient::class, Recipe::class],
-    version = 1,
+    entities = [Ingredient::class, Recipe::class, RecipeEntity::class],
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class FridgeDatabase : RoomDatabase() {
     abstract fun ingredientDao(): IngredientDao
     abstract fun savedRecipeDao(): SavedRecipeDao
+    abstract fun recipeDao(): RecipeDao
 
     companion object {
         @Volatile

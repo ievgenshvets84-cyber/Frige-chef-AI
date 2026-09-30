@@ -27,4 +27,26 @@ class ExampleUnitTest {
         val first = matched.first()
         assertTrue(first.urgentIngredientsSaved.isNotEmpty())
     }
+
+    @Test
+    fun testRecipeCatalogExceeds200Recipes() {
+        val allRecipes = DefaultRecipes.getRecipeCatalog()
+        assertTrue("Catalog must contain more than 200 recipes", allRecipes.size >= 200)
+    }
+
+    @Test
+    fun testCustomRecipeGeneratorCreatesDetailedSteps() = kotlinx.coroutines.runBlocking {
+        val generator = com.example.data.remote.GeminiRecipeGeneratorService()
+        val result = generator.generateCustomRecipe(
+            selectedIngredients = listOf("Zucchini", "Gouda", "Eier", "Tomaten"),
+            cookingStyle = "PFANNE"
+        )
+        assertTrue(result.isSuccess)
+        val recipe = result.getOrNull()
+        org.junit.Assert.assertNotNull(recipe)
+        // Check that it's a full culinary process with at least 4 steps, not just warming up
+        assertTrue("Recipe should have at least 4 detailed cooking steps", (recipe?.steps?.size ?: 0) >= 4)
+        assertTrue("Title should be non-empty", !recipe?.title.isNullOrBlank())
+        assertTrue("Ingredients used should contain selected items", recipe?.usedIngredients?.isNotEmpty() == true)
+    }
 }

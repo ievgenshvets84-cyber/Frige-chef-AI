@@ -265,6 +265,25 @@ fun RecipeDetailScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Culinary Description & Chef's Tip
+            if (recipe.description.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = recipe.description,
+                            style = MaterialTheme.typography.bodyMedium,
+                            lineHeight = 22.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
             // Cooking Step Timer Widget
             Card(
                 modifier = Modifier.fillMaxWidth(),

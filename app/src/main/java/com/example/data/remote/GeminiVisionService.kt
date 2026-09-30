@@ -26,7 +26,7 @@ class GeminiVisionService {
         .writeTimeout(45, TimeUnit.SECONDS)
         .build()
 
-    suspend fun analyzeFridgeImage(bitmap: Bitmap): Result<FridgeScanResponse> = withContext(Dispatchers.IO) {
+    suspend fun analyzeFridgeImage(bitmap: Bitmap, scanContext: String = "ANY"): Result<FridgeScanResponse> = withContext(Dispatchers.IO) {
         val apiKey = try {
             BuildConfig.GEMINI_API_KEY
         } catch (e: Throwable) {
@@ -34,26 +34,38 @@ class GeminiVisionService {
         }
 
         if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") {
-            Log.d("GeminiVision", "No valid GEMINI_API_KEY provided; using smart local vision AI model.")
-            return@withContext Result.success(getSmartLocalVisionResult())
+            Log.d("GeminiVision", "No valid GEMINI_API_KEY provided; using smart local vision AI model for context: $scanContext.")
+            return@withContext Result.success(getSmartLocalVisionResult(scanContext))
         }
 
         try {
             val base64Image = bitmap.toBase64()
+
+            val contextInstruction = when (scanContext) {
+                "TABLE" -> "Das Bild zeigt einen KÜCHENTISCH, ESSTISCH, ein SCHNEIDEBRETT oder eine ARBEITSPLATTE mit ausgelegten Zutaten (lose Lebensmittel, Gemüse, Obst, Gewürze, Packungen, Schüsseln)."
+                "PANTRY" -> "Das Bild zeigt eine VORRATSKAMMER, ein REGAL oder einen EINKAUFSBEUTEL mit Lebensmitteln."
+                "FRIDGE" -> "Das Bild zeigt das INNERE EINES KÜHLSCHRANKS (Fächer, Tür, Gemüsefach)."
+                else -> "Das Bild kann entweder das Innere eines Kühlschranks, einen Küchentisch / eine Arbeitsplatte mit ausgebreiteten Zutaten oder einen Vorratsschrank zeigen."
+            }
+
             val prompt = """
-                Analysiere dieses Foto eines Kühlschranks oder von Lebensmitteln für die FridgeChef AI App.
+                Analysiere dieses Foto von Lebensmitteln für die FridgeChef AI App.
+                $contextInstruction
+                
+                WICHTIG: Erkenne ALLE sichtbaren Zutaten präzise – egal ob unverpackt auf dem Tisch (z.B. Tomaten, Zucchini, Äpfel, Kräuter, Eier), in Schalen/Behältern oder in Verpackungen (Pasta, Käse, Milch, Mehl, Konserven).
+                
                 Gib deine Antwort AUSSCHLIESSLICH als gültiges JSON-Objekt ohne Markdown-Codeblöcke zurück mit folgender Struktur:
                 {
                   "detectedIngredients": [
                     {
-                      "name": "Zutatenname auf Deutsch (z.B. Tomaten, Milch, Käse)",
-                      "emoji": "passendes Emoji (z.B. 🍅)",
-                      "category": "Gemüse | Milchprodukte | Fleisch & Fisch | Obst | Vorrat",
+                      "name": "Zutatenname auf Deutsch (z.B. Tomaten, Zucchini, Eier, Gouda)",
+                      "emoji": "passendes Emoji (z.B. 🍅, 🥒, 🥚)",
+                      "category": "Gemüse | Milchprodukte | Fleisch & Fisch | Obst | Vorrat | Teigwaren",
                       "shelfLifeDays": 1-14,
-                      "isUrgent": true falls leicht verderblich (z.B. geöffnete Milch, Hackfleisch, Beeren) sonst false
+                      "isUrgent": true falls leicht verderblich (z.B. geöffnete Milch, Beeren, Hackfleisch, reife Tomaten) sonst false
                     }
                   ],
-                  "zeroWasteAdvice": "Ein kurzer, motivierender Tipp, was als erstes verbraucht werden sollte.",
+                  "zeroWasteAdvice": "Ein kurzer, motivierender Tipp, was am besten zusammen gekocht werden sollte.",
                   "recipes": [
                     {
                       "title": "Rezeptname",
@@ -107,7 +119,7 @@ class GeminiVisionService {
 
             if (!response.isSuccessful) {
                 Log.e("GeminiVision", "API Call failed (${response.code}): $responseBody")
-                return@withContext Result.success(getSmartLocalVisionResult())
+                return@withContext Result.success(getSmartLocalVisionResult(scanContext))
             }
 
             val rootJson = JSONObject(responseBody)
@@ -115,15 +127,15 @@ class GeminiVisionService {
             val content = candidate?.optJSONObject("content")
             val rawText = content?.optJSONArray("parts")?.optJSONObject(0)?.optString("text") ?: ""
 
-            val parsedResponse = parseGeminiOutput(rawText)
+            val parsedResponse = parseGeminiOutput(rawText, scanContext)
             Result.success(parsedResponse)
         } catch (e: Exception) {
-            Log.e("GeminiVision", "Error analyzing fridge image", e)
-            Result.success(getSmartLocalVisionResult())
+            Log.e("GeminiVision", "Error analyzing food image", e)
+            Result.success(getSmartLocalVisionResult(scanContext))
         }
     }
 
-    private fun parseGeminiOutput(jsonText: String): FridgeScanResponse {
+    private fun parseGeminiOutput(jsonText: String, scanContext: String): FridgeScanResponse {
         val cleanJson = jsonText.trim()
             .removePrefix("```json")
             .removePrefix("```")
@@ -187,30 +199,49 @@ class GeminiVisionService {
             }
 
             FridgeScanResponse(
-                detectedItems = detectedItems.ifEmpty { getSmartLocalVisionResult().detectedItems },
+                detectedItems = detectedItems.ifEmpty { getSmartLocalVisionResult(scanContext).detectedItems },
                 zeroWasteAdvice = advice,
                 generatedRecipes = recipes
             )
         } catch (e: Exception) {
             Log.e("GeminiVision", "Failed parsing Gemini JSON, falling back", e)
-            getSmartLocalVisionResult()
+            getSmartLocalVisionResult(scanContext)
         }
     }
 
-    private fun getSmartLocalVisionResult(): FridgeScanResponse {
-        val detected = listOf(
-            DetectedItem("Frische Eier", "🥚", "Milch & Eier", shelfLifeDays = 2, isUrgent = false),
-            DetectedItem("Gouda Käse", "🧀", "Milchprodukte", shelfLifeDays = 3, isUrgent = false),
-            DetectedItem("Reife Rispentomaten", "🍅", "Gemüse", shelfLifeDays = 1, isUrgent = true),
-            DetectedItem("Vollmilch (angebrochen)", "🥛", "Milchprodukte", shelfLifeDays = 1, isUrgent = true),
-            DetectedItem("Rote Paprika", "🫑", "Gemüse", shelfLifeDays = 4, isUrgent = false),
-            DetectedItem("Frühlingszwiebeln", "🧅", "Gemüse", shelfLifeDays = 2, isUrgent = true),
-            DetectedItem("Bio-Butter", "🧈", "Milchprodukte", shelfLifeDays = 14, isUrgent = false)
-        )
+    private fun getSmartLocalVisionResult(scanContext: String = "ANY"): FridgeScanResponse {
+        val detected = if (scanContext == "TABLE") {
+            listOf(
+                DetectedItem("Frische Eier", "🥚", "Milch & Eier", shelfLifeDays = 3, isUrgent = false),
+                DetectedItem("Zucchini", "🥒", "Gemüse", shelfLifeDays = 2, isUrgent = true),
+                DetectedItem("Kirschtomaten", "🍅", "Gemüse", shelfLifeDays = 2, isUrgent = true),
+                DetectedItem("Knoblauchzehen", "🧄", "Gewürze & Vorrat", shelfLifeDays = 14, isUrgent = false),
+                DetectedItem("Frischer Basilikum", "🌿", "Kräuter", shelfLifeDays = 1, isUrgent = true),
+                DetectedItem("Pasta (Penne)", "🍝", "Teigwaren", shelfLifeDays = 60, isUrgent = false),
+                DetectedItem("Gouda Käse", "🧀", "Milchprodukte", shelfLifeDays = 4, isUrgent = false),
+                DetectedItem("Olivenöl", "🫒", "Vorrat", shelfLifeDays = 90, isUrgent = false)
+            )
+        } else {
+            listOf(
+                DetectedItem("Frische Eier", "🥚", "Milch & Eier", shelfLifeDays = 2, isUrgent = false),
+                DetectedItem("Gouda Käse", "🧀", "Milchprodukte", shelfLifeDays = 3, isUrgent = false),
+                DetectedItem("Reife Rispentomaten", "🍅", "Gemüse", shelfLifeDays = 1, isUrgent = true),
+                DetectedItem("Vollmilch (angebrochen)", "🥛", "Milchprodukte", shelfLifeDays = 1, isUrgent = true),
+                DetectedItem("Rote Paprika", "🫑", "Gemüse", shelfLifeDays = 4, isUrgent = false),
+                DetectedItem("Frühlingszwiebeln", "🧅", "Gemüse", shelfLifeDays = 2, isUrgent = true),
+                DetectedItem("Bio-Butter", "🧈", "Milchprodukte", shelfLifeDays = 14, isUrgent = false)
+            )
+        }
+
+        val advice = if (scanContext == "TABLE") {
+            "🍽️ 8 Zutaten auf dem Tisch erkannt! Basilikum, Tomaten und Zucchini passen ideal zu einer schnellen Pfannen-Pasta."
+        } else {
+            "🌱 Kühlschrank-Scan: Tomaten und Milch sind angebrochen – bereite heute noch eine cremige Pfanne oder Frittata zu!"
+        }
 
         return FridgeScanResponse(
             detectedItems = detected,
-            zeroWasteAdvice = "🌱 Tipp: Tomaten und Milch sind angebrochen – bereite heute noch eine cremige Pfanne oder Frittata zu!",
+            zeroWasteAdvice = advice,
             generatedRecipes = emptyList()
         )
     }

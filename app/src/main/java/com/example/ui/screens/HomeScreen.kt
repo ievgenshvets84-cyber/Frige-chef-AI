@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -42,7 +43,11 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Kitchen
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -59,6 +64,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -82,9 +88,12 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.Recipe
+import com.example.ui.components.CustomRecipeCreatorSheet
 import com.example.ui.components.IngredientChip
+import com.example.ui.components.LanguagePickerDropdown
 import com.example.ui.components.RecipeCard
 import com.example.ui.components.ScannerOverlay
+import com.example.ui.i18n.LocalAppStrings
 import com.example.ui.theme.FreshGreenPrimary
 import com.example.ui.theme.FreshOrangeSecondary
 import com.example.ui.viewmodel.FridgeChefViewModel
@@ -95,9 +104,12 @@ import com.example.ui.viewmodel.ScanUiState
 fun HomeScreen(
     viewModel: FridgeChefViewModel,
     onNavigateToFavorites: () -> Unit,
+    onNavigateToCookbook: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
+    val currentLanguage by viewModel.currentLanguage.collectAsStateWithLifecycle()
     val ingredients by viewModel.ingredients.collectAsStateWithLifecycle()
     val savedRecipes by viewModel.savedRecipes.collectAsStateWithLifecycle()
     val matchedRecipes by viewModel.matchedRecipes.collectAsStateWithLifecycle()
@@ -111,6 +123,8 @@ fun HomeScreen(
     var newIngredientEmoji by remember { mutableStateOf("🥗") }
     var newIngredientUrgent by remember { mutableStateOf(false) }
     var showScanSheet by remember { mutableStateOf(false) }
+    var showCustomRecipeCreator by remember { mutableStateOf(false) }
+    var scanTargetContext by remember { mutableStateOf("TABLE") } // "TABLE" or "FRIDGE"
     val sheetState = rememberModalBottomSheetState()
 
     // Activity Result Launcher for Media / Photo Picker
@@ -125,9 +139,13 @@ fun HomeScreen(
                     @Suppress("DEPRECATION")
                     MediaStore.Images.Media.getBitmap(context.contentResolver, uri)
                 }
-                viewModel.startScanImage(bitmap)
+                viewModel.startScanImage(bitmap, scanTargetContext)
             } catch (e: Exception) {
-                viewModel.simulateSmartDemoScan()
+                if (scanTargetContext == "TABLE") {
+                    viewModel.simulateTableDemoScan()
+                } else {
+                    viewModel.simulateSmartDemoScan()
+                }
             }
         }
     }
@@ -137,9 +155,23 @@ fun HomeScreen(
         contract = ActivityResultContracts.TakePicturePreview()
     ) { bitmap: Bitmap? ->
         if (bitmap != null) {
-            viewModel.startScanImage(bitmap)
+            viewModel.onPhotoCaptured(bitmap)
+            viewModel.startScanImage(bitmap, scanTargetContext)
         }
     }
+
+    // Runtime CAMERA permission launcher following Android best practices
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        viewModel.onCameraPermissionResult(isGranted)
+        if (isGranted) {
+            takePictureLauncher.launch(null)
+        }
+    }
+
+    val showPermissionRationale by viewModel.showPermissionRationale.collectAsStateWithLifecycle()
+    val hasCameraPermission by viewModel.hasCameraPermission.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -148,7 +180,7 @@ fun HomeScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "FridgeChef AI",
+                            text = strings.appTitle,
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
@@ -161,7 +193,7 @@ fun HomeScreen(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = "ZERO WASTE",
+                                text = strings.zeroWasteBadge,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 fontWeight = FontWeight.Bold
@@ -170,6 +202,30 @@ fun HomeScreen(
                     }
                 },
                 actions = {
+                    // Quick Link to Custom Recipe Creator with Selected Ingredients
+                    IconButton(
+                        onClick = { showCustomRecipeCreator = true },
+                        modifier = Modifier.testTag("nav_custom_creator_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = strings.navCustomCreatorTooltip,
+                            tint = FreshOrangeSecondary
+                        )
+                    }
+
+                    // Quick Link to 220+ Recipe Book
+                    IconButton(
+                        onClick = onNavigateToCookbook,
+                        modifier = Modifier.testTag("nav_cookbook_top_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MenuBook,
+                            contentDescription = strings.navCookbookTooltip,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
                     IconButton(
                         onClick = onNavigateToFavorites,
                         modifier = Modifier.testTag("nav_favorites_btn")
@@ -177,7 +233,7 @@ fun HomeScreen(
                         Box {
                             Icon(
                                 imageVector = Icons.Default.Bookmark,
-                                contentDescription = "Gespeicherte Rezepte",
+                                contentDescription = strings.navFavoritesTooltip,
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             if (savedRecipes.isNotEmpty()) {
@@ -191,6 +247,13 @@ fun HomeScreen(
                             }
                         }
                     }
+
+                    // Top-Right Language Picker Dropdown
+                    LanguagePickerDropdown(
+                        currentLanguage = currentLanguage,
+                        onLanguageSelected = { viewModel.setLanguage(it) },
+                        modifier = Modifier.padding(end = 4.dp)
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface
@@ -264,14 +327,14 @@ fun HomeScreen(
                                 verticalArrangement = Arrangement.Bottom
                             ) {
                                 Text(
-                                    text = "Was kochen wir heute? 🍳",
+                                    text = strings.heroTitle,
                                     color = Color.White,
                                     fontSize = 20.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "Foto machen • KI erkennt Zutaten • Sofort Rezepte",
+                                    text = strings.heroSubtitle,
                                     color = Color(0xFFC8E6C9),
                                     fontSize = 12.sp
                                 )
@@ -295,30 +358,110 @@ fun HomeScreen(
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Kühlschrank scannen", fontWeight = FontWeight.Bold)
+                                        Text(strings.heroScanBtn, fontWeight = FontWeight.Bold)
                                     }
 
                                     Button(
-                                        onClick = { viewModel.simulateSmartDemoScan() },
+                                        onClick = onNavigateToCookbook,
                                         modifier = Modifier
                                             .height(44.dp)
-                                            .testTag("hero_quick_demo_btn"),
+                                            .testTag("hero_cookbook_btn"),
                                         shape = RoundedCornerShape(14.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.25f))
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
+                                            imageVector = Icons.Default.MenuBook,
                                             contentDescription = null,
                                             tint = Color.White,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("KI Demo", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                        Text(strings.heroCookbookBtn, color = Color.White, fontWeight = FontWeight.SemiBold)
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                // Quick Search Bar targeting Room Database
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clickable { onNavigateToCookbook() }
+                            .testTag("home_search_bar_card"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = "Suche",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = strings.searchBarPlaceholder,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
+                // Custom Recipe Creator CTA Card
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .clickable { showCustomRecipeCreator = true }
+                            .testTag("home_custom_recipe_cta_card"),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(FreshGreenPrimary),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("👨‍🍳", fontSize = 20.sp)
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = strings.customCreatorCtaTitle,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                                Text(
+                                    text = strings.customCreatorCtaSubtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
                 }
 
                 // Inventory Review Section
@@ -338,7 +481,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Erkannte Zutaten (${ingredients.size})",
+                                    text = "${strings.inventoryTitle} (${ingredients.size})",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -351,13 +494,13 @@ fun HomeScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Add,
-                                    contentDescription = "Zutat hinzufügen",
+                                    contentDescription = strings.inventoryAddBtn,
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Zutat ergänzen",
+                                    text = strings.inventoryAddBtn,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 13.sp
@@ -377,10 +520,10 @@ fun HomeScreen(
                                     modifier = Modifier.padding(20.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
-                                    Text("Dein Kühlschrank ist noch leer 🧊", fontWeight = FontWeight.Medium)
+                                    Text(strings.inventoryEmptyTitle, fontWeight = FontWeight.Medium)
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Scanne ein Foto oder füge Zutaten manuell hinzu.",
+                                        text = strings.inventoryEmptySubtitle,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.outline
                                     )
@@ -416,7 +559,7 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Rezept-Vorschläge (${matchedRecipes.size})",
+                                text = "${strings.matchedRecipesTitle} (${matchedRecipes.size})",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
@@ -434,19 +577,19 @@ fun HomeScreen(
                             FilterChip(
                                 selected = timeFilter == "ALL",
                                 onClick = { viewModel.setTimeFilter("ALL") },
-                                label = { Text("Alle Zeiten") }
+                                label = { Text(strings.filterAll) }
                             )
 
                             FilterChip(
                                 selected = timeFilter == "FAST",
                                 onClick = { viewModel.setTimeFilter(if (timeFilter == "FAST") "ALL" else "FAST") },
-                                label = { Text("⚡ Express <15m") }
+                                label = { Text(strings.filterFast) }
                             )
 
                             FilterChip(
                                 selected = zeroWasteOnly,
                                 onClick = { viewModel.toggleZeroWasteOnly() },
-                                label = { Text("🌱 Zero Waste Hero") },
+                                label = { Text(strings.filterZeroWaste) },
                                 colors = FilterChipDefaults.filterChipColors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
                                 )
@@ -455,7 +598,7 @@ fun HomeScreen(
                             FilterChip(
                                 selected = onlyFullMatch,
                                 onClick = { viewModel.toggleOnlyFullMatch() },
-                                label = { Text("💯 100% Match") }
+                                label = { Text(strings.filterFullMatch) }
                             )
 
                             FilterChip(
@@ -478,10 +621,10 @@ fun HomeScreen(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Keine Rezepte für diesen Filter gefunden 🔍", fontWeight = FontWeight.Bold)
+                                Text(strings.emptyRecipesTitle, fontWeight = FontWeight.Bold)
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    "Ergänze Zutaten oder deaktiviere Filter, um mehr Rezepte zu sehen.",
+                                    strings.emptyRecipesSubtitle,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.outline
                                 )
@@ -532,17 +675,57 @@ fun HomeScreen(
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
                 Text(
-                    text = "Kühlschrank scannen 📸",
+                    text = strings.scanSheetTitle,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Vision-KI erkennt Barcodes, Frische & Zutaten blitzschnell.",
+                    text = strings.scanSheetSubtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Scan Area Selector (Table vs. Fridge)
+                Text(
+                    text = strings.scanSheetContextLabel,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = scanTargetContext == "TABLE",
+                        onClick = { scanTargetContext = "TABLE" },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Restaurant, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text(strings.scanSheetContextTable) },
+                        modifier = Modifier.weight(1f),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
+
+                    FilterChip(
+                        selected = scanTargetContext == "FRIDGE",
+                        onClick = { scanTargetContext = "FRIDGE" },
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Kitchen, contentDescription = null, modifier = Modifier.size(16.dp))
+                        },
+                        label = { Text(strings.scanSheetContextFridge) },
+                        modifier = Modifier.weight(1f),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // Option 1: Direct Camera
                 Card(
@@ -550,7 +733,11 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .clickable {
                             showScanSheet = false
-                            takePictureLauncher.launch(null)
+                            if (hasCameraPermission) {
+                                takePictureLauncher.launch(null)
+                            } else {
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
                         }
                         .testTag("scan_option_camera"),
                     shape = RoundedCornerShape(16.dp),
@@ -575,8 +762,14 @@ fun HomeScreen(
                         }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("Foto mit Kamera aufnehmen", fontWeight = FontWeight.Bold)
-                            Text("Öffnet direkt die Kamera für Kühlschrank-Foto", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                text = if (scanTargetContext == "TABLE") strings.scanOptionCameraTitleTable else strings.scanOptionCameraTitleFridge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (scanTargetContext == "TABLE") strings.scanOptionCameraSubTable else strings.scanOptionCameraSubFridge,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                     }
                 }
@@ -610,21 +803,55 @@ fun HomeScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PhotoLibrary,
-                                contentDescription = "Galerie",
+                                contentDescription = strings.scanOptionGalleryTitle,
                                 tint = Color.White
                             )
                         }
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
-                            Text("Foto aus Galerie wählen", fontWeight = FontWeight.Bold)
-                            Text("Bereits gespeichertes Bild hochladen", style = MaterialTheme.typography.bodySmall)
+                            Text(strings.scanOptionGalleryTitle, fontWeight = FontWeight.Bold)
+                            Text(strings.scanOptionGallerySub, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Option 3: Smart AI Demo Test (Zero Friction)
+                Text(
+                    text = strings.scanQuickTestsLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Option 3: Table Demo
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            showScanSheet = false
+                            viewModel.simulateTableDemoScan()
+                        }
+                        .testTag("scan_option_table_demo"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🍽️", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(strings.scanOptionTableDemoTitle, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(strings.scanOptionTableDemoSub, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Option 4: Fridge Demo
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -632,36 +859,24 @@ fun HomeScreen(
                             showScanSheet = false
                             viewModel.simulateSmartDemoScan()
                         }
-                        .testTag("scan_option_demo"),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                        .testTag("scan_option_fridge_demo"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Row(
-                        modifier = Modifier.padding(16.dp),
+                        modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.tertiary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Schnell-Scan",
-                                tint = Color.White
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("🧊", fontSize = 24.sp)
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text("Express KI-Scan (Beispiel-Kühlschrank)", fontWeight = FontWeight.Bold)
-                            Text("Sofort testen mit realistischen Frische-Zutaten", style = MaterialTheme.typography.bodySmall)
+                            Text(strings.scanOptionFridgeDemoTitle, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(strings.scanOptionFridgeDemoSub, style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(30.dp))
+                Spacer(modifier = Modifier.height(28.dp))
             }
         }
     }
@@ -677,7 +892,7 @@ fun HomeScreen(
                     .padding(horizontal = 24.dp, vertical = 16.dp)
             ) {
                 Text(
-                    text = "Zutat ergänzen ✏️",
+                    text = strings.addDialogTitle,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -686,7 +901,7 @@ fun HomeScreen(
                 OutlinedTextField(
                     value = newIngredientName,
                     onValueChange = { newIngredientName = it },
-                    label = { Text("Zutatenname (z.B. Zucchini, Sahne)") },
+                    label = { Text(strings.addDialogNameLabel) },
                     singleLine = true,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -695,45 +910,20 @@ fun HomeScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text("Haltbarkeit / Dringlichkeit:", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
-                        selected = newIngredientUrgent,
-                        onClick = { newIngredientUrgent = true },
-                        label = { Text("🔴 Bald verbrauchen") }
+                    Checkbox(
+                        checked = newIngredientUrgent,
+                        onCheckedChange = { newIngredientUrgent = it }
                     )
-                    FilterChip(
-                        selected = !newIngredientUrgent,
-                        onClick = { newIngredientUrgent = false },
-                        label = { Text("🟢 Noch frisch") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = strings.addDialogUrgentToggle,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium
                     )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text("Schnell-Vorschläge:", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-                Spacer(modifier = Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("🥚 Eier", "🧀 Gouda", "🥛 Sahne", "🥩 Schinken", "🍞 Toast", "🥔 Kartoffeln", "🥕 Karotten").forEach { item ->
-                        val parts = item.split(" ")
-                        val emoji = parts.firstOrNull() ?: "🥗"
-                        val name = parts.drop(1).joinToString(" ")
-                        Button(
-                            onClick = {
-                                newIngredientName = name
-                                newIngredientEmoji = emoji
-                            },
-                            colors = ButtonDefaults.filledTonalButtonColors(),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(34.dp)
-                        ) {
-                            Text(item, fontSize = 12.sp)
-                        }
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -759,11 +949,53 @@ fun HomeScreen(
                 ) {
                     Icon(imageVector = Icons.Default.Check, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Zutat hinzufügen", fontWeight = FontWeight.Bold)
+                    Text(strings.addDialogConfirmBtn, fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+
+    // Camera Permission Rationale Dialog (Android Best Practice)
+    if (showPermissionRationale) {
+        AlertDialog(
+            onDismissRequest = { viewModel.setPermissionRationale(false) },
+            title = {
+                Text("Kamerazugriff benötigt 📸", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text("Um deinen Kühlschrank zu scannen und Zutaten automatisch per KI zu identifizieren, benötigt FridgeChef AI Zugriff auf die Kamera.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.setPermissionRationale(false)
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                ) {
+                    Text("Berechtigung erteilen")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { viewModel.setPermissionRationale(false) }
+                ) {
+                    Text("Später")
+                }
+            }
+        )
+    }
+
+    // Custom Recipe Creator Sheet
+    if (showCustomRecipeCreator) {
+        CustomRecipeCreatorSheet(
+            viewModel = viewModel,
+            availableIngredients = ingredients,
+            onDismiss = { showCustomRecipeCreator = false },
+            onRecipeCreated = {
+                showCustomRecipeCreator = false
+            }
+        )
     }
 }
